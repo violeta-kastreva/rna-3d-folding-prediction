@@ -15,7 +15,6 @@
 
 import torch
 import torch.nn as nn
-from functools import partialmethod
 from typing import Union, List
 
 
@@ -66,7 +65,8 @@ class DropoutRowwise(Dropout):
     1.11.6.
     """
 
-    __init__ = partialmethod(Dropout.__init__, batch_dim=-3)
+    def __init__(self, r: float):
+        super().__init__(r, batch_dim=-3)
 
 
 class DropoutColumnwise(Dropout):
@@ -75,4 +75,5 @@ class DropoutColumnwise(Dropout):
     1.11.6.
     """
 
-    __init__ = partialmethod(Dropout.__init__, batch_dim=-2)
+    def __init__(self, r: float):
+        super().__init__(r, batch_dim=-2)

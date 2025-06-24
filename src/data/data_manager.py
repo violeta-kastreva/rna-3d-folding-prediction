@@ -1,13 +1,21 @@
-import string
 from functools import cached_property
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, cast
 
-from torch.utils.data import DataLoader
+import numpy as np
+import torch
+from torch.utils.data import DataLoader, Sampler
 
+from data.batch_collator import BatchCollator
+from data.batch_samplers.combined_train_batch_sampler import CombinedTrainBatchSampler
 from data.batch_samplers.train_batch_sampler import TrainBatchSampler
 from data.combined_dataset import CombinedDataset
 from data.experimental_dataset import ExperimentalDataset
+from data.msa.msa_dataset import MSAConfig, MSADataset
+from data.rna_dataset_base import RNADatasetBase
+from data.sequence_padder import SequencePadder
+from data.token_encoder import TokenEncoder
+from data.token_library import TokenLibrary
 from data.uv_synthetic_dataset import UVSyntheticDataset
 
 
@@ -20,11 +28,14 @@ class DataManagerConfig:
     val_label_files: list[str]
 
     test_sequence_files: list[str]
+    test_label_files: list[str]
 
     msa_folders: list[str]
+    msa_config: MSAConfig
 
-    synthetic_data_root_path: str
-    synthetic_data_index_filepath: str
+    combine_synthetic_with_real_data: bool = True
+    synthetic_data_root_path: Optional[str] = None
+    synthetic_data_index_filepath: Optional[str] = None
 
     train_batch_size: int = 4
     val_batch_size: Optional[int] = None
@@ -39,61 +50,120 @@ class DataManagerConfig:
     train_shuffle_radius: int = 50
 
     def __post_init__(self):
+        if self.combine_synthetic_with_real_data and (
+            self.synthetic_data_root_path is None or
+            self.synthetic_data_index_filepath is None
+        ):
+            raise ValueError(
+                "Synthetic data root path and index file path must be provided if "
+                "combine_synthetic_with_real_data is True."
+            )
         if self.val_batch_size is None:
             self.val_batch_size = self.train_batch_size
         if self.test_batch_size is None:
             self.test_batch_size = self.train_batch_size
 
 
-class DataManager:
-    def __init__(self, config: DataManagerConfig):
+class DataManager(TokenLibrary):
+    def __init__(self, config: DataManagerConfig, device: torch.device):
+        super().__init__()
         self.config: DataManagerConfig = config
+        self.device: torch.device = device
 
     @cached_property
-    def train_dataset(self) -> CombinedDataset:
+    def token_encoder(self) -> TokenEncoder:
+        return TokenEncoder(
+            np.array(self.all_tokens),
+            self.map_token_to_id,
+            self.missing_residue_token_id,
+        )
+
+    @cached_property
+    def msa_dataset(self) -> MSADataset:
+        return MSADataset(
+            msa_folders=self.config.msa_folders,
+            msa_config=self.config.msa_config,
+            residues=self.rna_tokens + [self.missing_residue_token],
+            token_encoder=self.token_encoder,
+        )
+
+    @cached_property
+    def sequence_padder(self) -> SequencePadder:
+        return SequencePadder(pad_token_id=self.pad_token_id)
+
+    @cached_property
+    def batch_collator(self) -> BatchCollator:
+        return BatchCollator(sequence_padder=self.sequence_padder)
+
+    @cached_property
+    def train_dataset(self) -> RNADatasetBase:
+        experimental_dataset = ExperimentalDataset(
+            sequence_files=self.config.train_sequence_files,
+            label_files=self.config.train_label_files,
+            msa_dataset=self.msa_dataset,
+            sequence_padder=self.sequence_padder,
+            batch_collator=self.batch_collator,
+            device=self.device,
+        )
+        if not self.config.combine_synthetic_with_real_data:
+            return experimental_dataset
+
         return CombinedDataset(
             datasets=[
-                ExperimentalDataset(
-                    self.config.train_sequence_files,
-                    self.config.train_label_files,
-                    self.config.msa_folders
-                ),
+                experimental_dataset,
                 UVSyntheticDataset(
-                    self.config.synthetic_data_root_path,
-                    self.config.synthetic_data_index_filepath
+                    root_path=self.config.synthetic_data_root_path,
+                    index_filepath=self.config.synthetic_data_index_filepath,
+                    batch_collator=self.batch_collator,
+                    encoder=self.token_encoder,
+                    device=self.device,
                 ),
             ],
         )
 
     @cached_property
-    def validation_dataset(self) -> ExperimentalDataset:
+    def validation_dataset(self) -> RNADatasetBase:
         return ExperimentalDataset(
-            self.config.val_sequence_files,
-            self.config.val_label_files,
-            self.config.msa_folders,
+            sequence_files=self.config.val_sequence_files,
+            label_files=self.config.val_label_files,
+            msa_dataset=self.msa_dataset,
+            sequence_padder=self.sequence_padder,
+            batch_collator=self.batch_collator,
+            device=self.device,
         )
 
     @cached_property
-    def test_dataset(self) -> ExperimentalDataset:
+    def test_dataset(self) -> RNADatasetBase:
         return ExperimentalDataset(
-            self.config.test_sequence_files,
-            [],
-            self.config.msa_folders,
-            has_ground_truth=False,
+            sequence_files=self.config.test_sequence_files,
+            label_files=self.config.test_label_files,
+            msa_dataset=self.msa_dataset,
+            sequence_padder=self.sequence_padder,
+            batch_collator=self.batch_collator,
+            device=self.device,
         )
 
     @cached_property
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_dataset,
-            num_workers=self.config.train_num_workers,
-            batch_sampler=TrainBatchSampler(
+        batch_sampler: Sampler[list[int]]
+        if self.config.combine_synthetic_with_real_data:
+            batch_sampler = CombinedTrainBatchSampler(
+                dataset=cast(CombinedDataset, self.train_dataset),
+                batch_size_base=self.config.train_batch_size,
+                shuffle_radius=self.config.train_shuffle_radius,
+            )
+        else:
+            batch_sampler = TrainBatchSampler(
                 dataset=self.train_dataset,
                 batch_size_base=self.config.train_batch_size,
                 shuffle_radius=self.config.train_shuffle_radius,
-            ),
+            )
+        return DataLoader(
+            self.train_dataset,
+            num_workers=self.config.train_num_workers,
+            batch_sampler=batch_sampler,
             prefetch_factor=self.config.prefetch_factor,
-            collate_fn=self.train_dataset.__class__.collate_fn,
+            collate_fn=lambda x: self.batch_collator(x),
         )
 
     @cached_property
@@ -103,7 +173,7 @@ class DataManager:
             num_workers=self.config.val_num_workers,
             batch_size=self.config.val_batch_size,
             prefetch_factor=self.config.prefetch_factor,
-            collate_fn=self.validation_dataset.__class__.collate_fn,
+            collate_fn=lambda x: self.batch_collator(x),
         )
 
     @cached_property
@@ -113,17 +183,5 @@ class DataManager:
             num_workers=self.config.test_num_workers,
             batch_size=self.config.test_batch_size,
             prefetch_factor=self.config.prefetch_factor,
-            collate_fn=self.test_dataset.__class__.collate_fn,
+            collate_fn=lambda x: self.batch_collator(x),
         )
-
-    @cached_property
-    def all_tokens(self) -> list[str]:
-        return list(string.ascii_uppercase) + ["-", "?"]
-
-    @cached_property
-    def map_token_to_id(self) -> dict[str, int]:
-        return {token: idx for idx, token in enumerate(self.all_tokens)}
-
-    @cached_property
-    def pad_token_id(self) -> int:
-        return len(self.all_tokens) - 1

@@ -82,13 +82,13 @@ class MultiHeadAttention(nn.Module):
         self.d_k: int = d_k
         self.d_v: int = default(d_v, d_k)
 
-        self.w_qs = nn.Linear(d_model, n_head * d_k, bias=False)  # (d_model) -> (n_head * d_k)
-        self.w_ks = nn.Linear(d_model, n_head * d_k, bias=False)  # (d_model) -> (n_head * d_k)
-        self.w_vs = nn.Linear(d_model, n_head * d_v, bias=False)  # (d_model) -> (n_head * d_v)
-        self.fc = nn.Linear(n_head * d_v, d_model, bias=False)  # (n_head * d_v) -> (d_model)
+        self.w_qs = nn.Linear(d_model, n_head * self.d_k, bias=False)  # (d_model) -> (n_head * d_k)
+        self.w_ks = nn.Linear(d_model, n_head * self.d_k, bias=False)  # (d_model) -> (n_head * d_k)
+        self.w_vs = nn.Linear(d_model, n_head * self.d_v, bias=False)  # (d_model) -> (n_head * d_v)
+        self.fc = nn.Linear(n_head * self.d_v, d_model, bias=False)  # (n_head * d_v) -> (d_model)
 
         self.attention: ScaledDotProductAttention = ScaledDotProductAttention(
-            temperature=d_k ** 0.5,
+            temperature=self.d_k ** 0.5,
             attn_dropout=dropout
         )
 

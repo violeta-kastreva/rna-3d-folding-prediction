@@ -35,6 +35,7 @@ def test_kabsch_algorithm_goal_to_minimize_mse(
 
     assert (mse_real <= mse_random).all()
 
+#TODO: FAILED TESTS
 
 @pytest.mark.parametrize(
     "points_p, points_q, target_aligned_points_p, target_rotation_matrix, target_translation_vector", [

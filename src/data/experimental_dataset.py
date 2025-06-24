@@ -1,23 +1,32 @@
-import os
-from glob import glob
+import random
 from io import StringIO
-from typing import Any
+from typing import Optional
 
+import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset
-from Bio import SeqIO
+from overrides import overrides
 
-from data.utils import collate_fn
+from data.msa.msa_dataset import MSADataset
+from data.msa.msa_loader import MSALoader
+from data.rna_dataset_base import RNADatasetBase
+from data.sequence_padder import SequencePadder
+from data.token_encoder import TokenEncoder
+from data.batch_collator import BatchCollator, DataPoint, DataBatch
 
 
-class ExperimentalDataset(Dataset):
+class ExperimentalDataset(RNADatasetBase):
+    CHANCE_FLIP: float = 0.5
+    CHANCE_USE_MSA_WHEN_AVAILABLE: float = 0.95
+
     def __init__(
             self,
             sequence_files: list[str],
             label_files: list[str],
-            msa_folders: list[str] = None,
-            has_ground_truth: bool = True
+            msa_dataset: MSADataset,
+            sequence_padder: SequencePadder,
+            batch_collator: BatchCollator,
+            device: torch.device,
     ):
         self.df_sequences: pd.DataFrame = pd.concat(
             [pd.read_csv(filepath) for filepath in sequence_files],
@@ -25,151 +34,177 @@ class ExperimentalDataset(Dataset):
         )
         self.df_sequences = self.df_sequences[~self.df_sequences["target_id"].duplicated(keep="last")]
 
-        self.df_sequences['all_sequences'] = self.df_sequences['all_sequences'].fillna("")
+        self.df_sequences["all_sequences"] = self.df_sequences["all_sequences"].fillna("")
 
-        self.has_ground_truth: bool = has_ground_truth
-        if self.has_ground_truth:
-            df_labels: pd.DataFrame = pd.concat(
-                [pd.read_csv(filepath) for filepath in label_files],
-                ignore_index=True,
-            )
-            df_labels = df_labels[~df_labels["ID"].duplicated(keep="last")]
+        df_labels: pd.DataFrame = pd.concat(
+            [pd.read_csv(filepath) for filepath in label_files],
+            ignore_index=True,
+        )
+        df_labels = df_labels[~df_labels["ID"].duplicated(keep="last")]
 
-            df_labels['target_id'] = df_labels['ID'].str.rsplit('_', n=1).str[0]
-            self.df_labels: pd.api.typing.DataFrameGroupBy = df_labels.drop(columns=['ID']).groupby('target_id')
-        else:
-            self.df_labels: pd.api.typing.DataFrameGroupBy = pd.DataFrame(
-                columns=["target_id","resname","resid","x_1","y_1","z_1"]
-            ).groupby('target_id')
+        df_labels['target_id'] = df_labels['ID'].str.rsplit('_', n=1).str[0]
+        self.df_labels: pd.api.typing.DataFrameGroupBy = df_labels.drop(columns=['ID']).groupby('target_id')
 
-        self.msa_folders: list[str] = msa_folders
-        self.msa_indices: list[str] = [
-            filepath.replace("\\", "/").split('/')[-1].removesuffix(".MSA.fasta")
-            for msa_folder in msa_folders
-            for filepath in glob(f"{msa_folder}/*/*.MSA.fasta")
-        ]
+        self.msa_dataset: MSADataset = msa_dataset
+        self.encoder: TokenEncoder = msa_dataset.token_encoder
+        self.sequence_padder: SequencePadder = sequence_padder
+        self.batch_collator: BatchCollator = batch_collator
+        self.device: torch.device = device
 
+    @overrides
     def records_lengths(self) -> list[int]:
         return self.df_sequences["sequence"].apply(len).tolist()
 
-    def __len__(self):
+    @overrides
+    def __len__(self) -> int:
         return len(self.df_sequences)
 
-    def __getitem__(self, idx):
+    @overrides
+    def __getitem__(self, idx: int) -> DataPoint:
         if idx < 0:
             idx += len(self)
 
         if not (0 <= idx < len(self)):
             raise IndexError("Index out of bounds")
 
-        sequence: str = self.df_sequences["sequence"].iloc[idx]
-        msa: list[str] = self.get_msa(idx) if self._has_msa(idx) else [self.df_sequences["sequence"].iloc[idx]]
-        all_sequences: list[str] = self._parse_fasta(
-            self.df_sequences["all_sequences"].iloc[idx],
-            is_filepath=False
-        )
-        if len(all_sequences) == 0:
-            all_sequences = [sequence]
+        target_id: str = self.df_sequences["target_id"].iloc[idx]
+        sequence, should_reverse = self._get_sequence(idx)
+        has_msa, msa, msa_profiles = self._get_msa(target_id, idx)
+        has_product_sequences, product_sequences = self._get_product_sequences(idx)
+        ground_truth, num_ground_truths = self._get_ground_truth(idx, target_id)
 
-        assert not self.has_ground_truth or self.df_sequences["target_id"].iloc[idx] in self.df_labels.groups
-        assert min(msa, key=len, default=0) == max(msa, key=len, default=0)
-        assert len(sequence) <= len(msa[0])
-
-        msa_atom_index: list[int] = []
-        ind: int = 0
-        for i, letter in enumerate(msa[0]):
-            if ind < len(sequence) and letter == sequence[ind]:
-                msa_atom_index.append(i)
-                ind += 1
-
-        ground_truth: torch.Tensor = torch.zeros((0, 0, 3), dtype=torch.float32)
-        if not self.has_ground_truth:
-            ground_truth = torch.zeros((0, 0, 3), dtype=torch.float32)
-        else:
-            label: pd.DataFrame = self.df_labels.get_group(self.df_sequences["target_id"].iloc[idx]).copy()
-
-            assert self.df_sequences["target_id"].iloc[idx] in self.df_labels.groups and not label.empty, \
-                f"No GT: {self.df_sequences['target_id'].iloc[idx]}"
-
-            label = (label
-                .drop(columns=["target_id", "resname"])
-                .sort_values(by='resid')
-                .set_index(keys=['resid'])
-            )
-
-            assert len(label.columns) % 3 == 0, (
-                "Label columns should be a multiple of 3, but got: {}".format(len(label.columns)))
-            num_ground_truths: int = len(label.columns) // 3
-            last_index_valid_ground_truth: int = num_ground_truths
-            for i in range(num_ground_truths):
-                if any((label[f"{coord}_{i + 1}"].isna() | label[f"{coord}_{i + 1}"] == -1e+18).any() for coord in ['x', 'y', 'z']):
-                    last_index_valid_ground_truth = i
-                    break
-
-            if self.df_sequences["target_id"].iloc[idx] == "2BQ5_S":
-                print("Ha")
-            coords: torch.Tensor = torch.zeros((last_index_valid_ground_truth, len(label), 3))
-            for i, coord in enumerate(['x', 'y', 'z']):
-                coords[:, :, i] = torch.tensor(
-                    label[[f"{coord}_{j + 1}" for j in range(last_index_valid_ground_truth)]].values.T,
-                    dtype=torch.float32,
-                )
-
-            ground_truth = coords
-
-        result: dict[str, Any] = {
-            "target_id": self.df_sequences["target_id"].iloc[idx],
+        result: DataPoint = {
+            "target_id": target_id,
             "sequence": sequence,
-            "msa": msa,
-            "all_sequences": all_sequences,
+            "sequence_mask": torch.ones_like(sequence, dtype=torch.bool, device=self.device),
+            "has_msa": torch.tensor(has_msa, dtype=torch.bool, device=self.device),
+            "msa": torch.tensor(msa, dtype=torch.int8, device=self.device) if has_msa else None,
+            "msa_profiles": torch.tensor(msa_profiles, dtype=torch.float32, device=self.device) if has_msa else None,
+            "has_product_sequences": torch.tensor(has_product_sequences, dtype=torch.bool, device=self.device),
+            "product_sequences": product_sequences,
             "ground_truth": ground_truth,
-            "is_synthetic": torch.tensor(False, dtype=torch.bool),
-            "msa_atom_index": msa_atom_index,
+            "num_ground_truths": torch.tensor(num_ground_truths, dtype=torch.int8, device=self.device),
+            "is_synthetic": torch.tensor(False, dtype=torch.bool, device=self.device),
         }
 
         return result
 
-    def _has_msa(self, idx):
-        # Placeholder for actual MSA check logic
-        return self.df_sequences["target_id"].iloc[idx] in self.msa_indices
+    def _get_sequence(self, idx: int) -> tuple[torch.Tensor, bool]:
+        sequence: np.ndarray = self.encoder.encode(np.array(list(
+            self.df_sequences["sequence"].iloc[idx]), dtype='U1'
+        ))
+        should_reverse: bool = random.random() <= self.CHANCE_FLIP
+        if should_reverse:
+            sequence = sequence[::-1].copy()
+        return torch.tensor(sequence, dtype=torch.int8, device=self.device), should_reverse
+
+    def _get_msa(self, target_id: str, idx: int) -> tuple[bool, Optional[np.ndarray], Optional[np.ndarray]]:
+        has_msa: bool = self.msa_dataset.has_msa(target_id)
+        if not has_msa:
+            return False, None, None
+
+        msa, msa_profiles = self.msa_dataset.get_msa(
+            target_id,
+            len(self.df_sequences["sequence"].iloc[idx]),
+            lambda x: x[:, ::-1] if random.random() <= self.CHANCE_FLIP else x
+        )
+        return has_msa, msa, msa_profiles
+
+    def _get_product_sequences(self, idx: int) -> tuple[bool, Optional[list[torch.Tensor]]]:
+        all_sequences: list[list[str]] = self._parse_sequences(self.df_sequences["all_sequences"].iloc[idx])
+        has_product_sequences: bool = len(all_sequences) > 0
+        all_sequences = [
+            seq[::-1] if random.random() <= self.CHANCE_FLIP else seq
+            for seq in all_sequences
+
+        ]
+
+        if not has_product_sequences:
+            return False, None
+
+        product_sequences = [
+            torch.tensor(
+                self.encoder.encode(np.array(list(seq), dtype='U1')),
+                dtype=torch.int8,
+                device=self.device,
+            )
+            for seq in all_sequences
+        ]
+        return has_product_sequences, product_sequences
 
     @staticmethod
-    def _parse_fasta(fasta: str, is_filepath: bool) -> list[str]:
-        if not is_filepath:
-            if not isinstance(fasta, str):
-                print("Fasta: ", fasta)
-            fasta = StringIO(fasta)
-        return [str(record.seq) for record in SeqIO.parse(fasta, "fasta")]
+    def _parse_sequences(sequences: str) -> list[list[str]]:
+        return MSALoader.parse_fasta(StringIO(sequences))
 
-    def get_msa(self, idx):
-        for folder in self.msa_folders:
-            msa_file = rf"{folder}\{self.df_sequences['target_id'].iloc[idx]}.MSA.fasta"
-            if os.path.exists(msa_file):
-                return self._parse_fasta(msa_file, is_filepath=True)
+    def _get_ground_truth(self, idx: int, target_id: str) -> tuple[torch.Tensor, int]:
+        label: pd.DataFrame = self.df_labels.get_group(target_id).copy()
 
-        raise ValueError(f"No MSA for {self.df_sequences['target_id'].iloc[idx]}.")
+        assert target_id in self.df_labels.groups and not label.empty, \
+            f"No GT: {self.df_sequences['target_id'].iloc[idx]}"
 
-    @staticmethod
-    def collate_fn(batch):
-        return collate_fn(batch)
+        label = (label
+                 .drop(columns=["target_id", "resname"])
+                 .sort_values(by='resid')
+                 .set_index(keys=['resid'])
+                 )
+
+        assert len(label.columns) % 3 == 0, (
+            "Label columns should be a multiple of 3, but got: {}".format(len(label.columns)))
+        num_ground_truths: int = len(label.columns) // 3
+        last_index_valid_ground_truth: int = num_ground_truths
+        axes: list[str] = ["x", "y", "z"]
+        for i in range(num_ground_truths):
+            if any((label[f"{coord}_{i + 1}"].isna() | label[f"{coord}_{i + 1}"] == -1e+18).any() for coord in axes):
+                last_index_valid_ground_truth = i
+                break
+
+        num_ground_truths: int = last_index_valid_ground_truth
+        ground_truth: torch.Tensor = torch.zeros((len(label), num_ground_truths, 3))
+        for i, coord in enumerate(axes):
+            ground_truth[:, :, i] = torch.tensor(
+                label[[f"{coord}_{j + 1}" for j in range(num_ground_truths)]].values.T.reshape((len(label), num_ground_truths)),
+                dtype=torch.float32,
+                device=self.device,
+            )
+
+        return ground_truth, num_ground_truths
+
+    @overrides
+    def collate_fn(self, batch: list[DataPoint]) -> DataBatch:
+        return self.batch_collator(batch)
 
 
 if __name__ == "__main__":
-    root_path: str = r"E:\Raw Datasets\Stanford RNA Dataset"
-    # sequence_files: list[str] = [root_path + "\\" + filename for filename in ("train_sequences.csv", "train_sequences.v2.csv")]
-    # label_files: list[str] = [root_path + "\\" + filename for filename in ("train_labels.csv", "train_labels.v2.csv")]
-    sequence_files: list[str] = [root_path + "\\" + filename for filename in ("validation_sequences.csv",)]
-    label_files: list[str] = [root_path + "\\" + filename for filename in ("validation_labels.csv")]
+    root_path_: str = r"E:\Raw Datasets\Stanford RNA Dataset"
+    # sequence_files_: list[str] = [root_path_ + "\\" + filename for filename in ("train_sequences.csv", "train_sequences.v2.csv",)]
+    # label_files_: list[str] = [root_path_ + "\\" + filename for filename in ("train_labels.csv", "train_labels.v2.csv",)]
+    sequence_files_: list[str] = [root_path_ + "\\" + filename for filename in ("validation_sequences.csv",)]
+    label_files_: list[str] = [root_path_ + "\\" + filename for filename in ("validation_labels.csv",)]
     # sequence_files: list[str] = [root_path + "\\" + filename for filename in ("test_sequences.csv",)]
     # label_files: list[str] = []
-    msa_folders: list[str] = [root_path + "\\" + directory for directory in ("MSA", "MSA_v2")]
+    msa_folders_: list[str] = [root_path_ + "\\" + directory for directory in ("MSA", "MSA_v2",)]
 
-    dataset = ExperimentalDataset(sequence_files, label_files, msa_folders, has_ground_truth=False)
-    print(f"Dataset length: {len(dataset)}")
-    print(f"First item: {dataset[0]}")
-    for i, record in enumerate(dataset):
-        if i % 100 == 0:
-            print(f"Label: {record.get('target_id')}, Coords: {record.get('ground_truth', 'No ground truth')}")
+    from data.msa.msa_dataset import MSAConfig
+    from data.token_library import TokenLibrary
+    token_lib_ = TokenLibrary()
+    msa_dataset_ = MSADataset(
+        msa_folders=msa_folders_,
+        msa_config=MSAConfig(),  # Assuming MSAConfig is not needed for this example
+        residues=list("ACGU-"),
+        token_encoder=TokenEncoder(
+            tokens=np.array(token_lib_.all_tokens, dtype='U1'),
+            map_token_to_id=token_lib_.map_token_to_id,
+            missing_token_id=token_lib_.missing_residue_token_id,
+        ),
+    )
+    seq_padder_ = SequencePadder(pad_token_id=token_lib_.pad_token_id)
+    batch_collator_ = BatchCollator(sequence_padder=seq_padder_)
+    dataset_ = ExperimentalDataset(sequence_files_, label_files_, msa_dataset_, seq_padder_, batch_collator_, device=torch.device("cpu"))
+    print(f"Dataset length: {len(dataset_)}")
+    print(f"First item: {dataset_[0]}")
+    for i_, record_ in enumerate(dataset_):
+        if i_ % 100 == 0:
+            print(f"Label: {record_.get('target_id')}, Coords: {record_.get('ground_truth', 'No ground truth')}")
             # print(
             #     f"Record {i}: {record['sequence']}, "
             #     f"MSA: {record['msa']}, "
