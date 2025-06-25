@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from torch.utils.data import Dataset
 
-from data.batch_collator import DataPoint, DataBatch
+from data.typing import DataPoint, DataBatch
 
 
 class RNADatasetBase(ABC, Dataset):

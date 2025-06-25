@@ -5,7 +5,7 @@ import torch
 import torch.utils.checkpoint as checkpoint
 from torch import nn
 
-from data.batch_collator import DataBatch, DataPoint
+from data.typing import DataBatch, DataPoint
 from data.token_library import TokenLibrary
 from model.conv_transformer_encoder import ConvTransformerEncoder
 from model.mish_activation import Mish

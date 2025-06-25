@@ -12,13 +12,11 @@ from data.msa.msa_loader import MSALoader
 from data.rna_dataset_base import RNADatasetBase
 from data.sequence_padder import SequencePadder
 from data.token_encoder import TokenEncoder
-from data.batch_collator import BatchCollator, DataPoint, DataBatch
+from data.batch_collator import BatchCollator
+from data.typing import DataPoint, DataBatch
 
 
 class ExperimentalDataset(RNADatasetBase):
-    CHANCE_FLIP: float = 0.5
-    CHANCE_USE_MSA_WHEN_AVAILABLE: float = 0.95
-
     def __init__(
             self,
             sequence_files: list[str],
@@ -26,6 +24,8 @@ class ExperimentalDataset(RNADatasetBase):
             msa_dataset: MSADataset,
             sequence_padder: SequencePadder,
             batch_collator: BatchCollator,
+            chance_flip: float,
+            chance_use_msa_when_available: float,
             device: torch.device,
     ):
         self.df_sequences: pd.DataFrame = pd.concat(
@@ -49,6 +49,8 @@ class ExperimentalDataset(RNADatasetBase):
         self.encoder: TokenEncoder = msa_dataset.token_encoder
         self.sequence_padder: SequencePadder = sequence_padder
         self.batch_collator: BatchCollator = batch_collator
+        self.chance_flip: float = chance_flip
+        self.chance_use_msa_when_available: float = chance_use_msa_when_available
         self.device: torch.device = device
 
     @overrides
@@ -69,18 +71,18 @@ class ExperimentalDataset(RNADatasetBase):
 
         target_id: str = self.df_sequences["target_id"].iloc[idx]
         sequence, should_reverse = self._get_sequence(idx)
-        has_msa, msa, msa_profiles = self._get_msa(target_id, idx)
-        has_product_sequences, product_sequences = self._get_product_sequences(idx)
-        ground_truth, num_ground_truths = self._get_ground_truth(idx, target_id)
+        has_msa, msa, msa_profiles = self._get_msa(target_id, idx, should_reverse)
+        num_product_sequences, product_sequences = self._get_product_sequences(idx)
+        ground_truth, num_ground_truths = self._get_ground_truth(idx, target_id, should_reverse)
 
         result: DataPoint = {
             "target_id": target_id,
             "sequence": sequence,
             "sequence_mask": torch.ones_like(sequence, dtype=torch.bool, device=self.device),
             "has_msa": torch.tensor(has_msa, dtype=torch.bool, device=self.device),
-            "msa": torch.tensor(msa, dtype=torch.int8, device=self.device) if has_msa else None,
-            "msa_profiles": torch.tensor(msa_profiles, dtype=torch.float32, device=self.device) if has_msa else None,
-            "has_product_sequences": torch.tensor(has_product_sequences, dtype=torch.bool, device=self.device),
+            "msa": torch.tensor(msa, dtype=torch.int8, device=self.device),
+            "msa_profiles": torch.tensor(msa_profiles, dtype=torch.float32, device=self.device),
+            "num_product_sequences": torch.tensor(num_product_sequences, dtype=torch.int16, device=self.device),
             "product_sequences": product_sequences,
             "ground_truth": ground_truth,
             "num_ground_truths": torch.tensor(num_ground_truths, dtype=torch.int8, device=self.device),
@@ -93,34 +95,34 @@ class ExperimentalDataset(RNADatasetBase):
         sequence: np.ndarray = self.encoder.encode(np.array(list(
             self.df_sequences["sequence"].iloc[idx]), dtype='U1'
         ))
-        should_reverse: bool = random.random() <= self.CHANCE_FLIP
+        should_reverse: bool = random.random() < self.chance_flip
         if should_reverse:
             sequence = sequence[::-1].copy()
         return torch.tensor(sequence, dtype=torch.int8, device=self.device), should_reverse
 
-    def _get_msa(self, target_id: str, idx: int) -> tuple[bool, Optional[np.ndarray], Optional[np.ndarray]]:
-        has_msa: bool = self.msa_dataset.has_msa(target_id)
+    def _get_msa(self, target_id: str, idx: int, should_reverse: bool) -> tuple[bool, Optional[np.ndarray], Optional[np.ndarray]]:
+        has_msa: bool = self.msa_dataset.has_msa(target_id) and random.random() < self.chance_use_msa_when_available
         if not has_msa:
             return False, None, None
 
         msa, msa_profiles = self.msa_dataset.get_msa(
             target_id,
-            len(self.df_sequences["sequence"].iloc[idx]),
-            lambda x: x[:, ::-1] if random.random() <= self.CHANCE_FLIP else x
+            has_msa,
+            self.df_sequences["sequence"].iloc[idx],
+            lambda x: x[:, ::-1] if should_reverse else x
         )
         return has_msa, msa, msa_profiles
 
-    def _get_product_sequences(self, idx: int) -> tuple[bool, Optional[list[torch.Tensor]]]:
+    def _get_product_sequences(self, idx: int) -> tuple[int, Optional[list[torch.Tensor]]]:
         all_sequences: list[list[str]] = self._parse_sequences(self.df_sequences["all_sequences"].iloc[idx])
-        has_product_sequences: bool = len(all_sequences) > 0
+        num_product_sequences: int = len(all_sequences)
         all_sequences = [
-            seq[::-1] if random.random() <= self.CHANCE_FLIP else seq
+            seq[::-1] if random.random() < self.chance_flip else seq
             for seq in all_sequences
-
         ]
 
-        if not has_product_sequences:
-            return False, None
+        if not num_product_sequences == 0:
+            return num_product_sequences, None
 
         product_sequences = [
             torch.tensor(
@@ -130,13 +132,14 @@ class ExperimentalDataset(RNADatasetBase):
             )
             for seq in all_sequences
         ]
-        return has_product_sequences, product_sequences
+
+        return num_product_sequences, product_sequences
 
     @staticmethod
     def _parse_sequences(sequences: str) -> list[list[str]]:
         return MSALoader.parse_fasta(StringIO(sequences))
 
-    def _get_ground_truth(self, idx: int, target_id: str) -> tuple[torch.Tensor, int]:
+    def _get_ground_truth(self, idx: int, target_id: str, should_reverse: bool) -> tuple[torch.Tensor, int]:
         label: pd.DataFrame = self.df_labels.get_group(target_id).copy()
 
         assert target_id in self.df_labels.groups and not label.empty, \
@@ -159,13 +162,21 @@ class ExperimentalDataset(RNADatasetBase):
                 break
 
         num_ground_truths: int = last_index_valid_ground_truth
-        ground_truth: torch.Tensor = torch.zeros((len(label), num_ground_truths, 3))
+        ground_truth: torch.Tensor = torch.zeros(
+            (len(label), num_ground_truths, 3), dtype=torch.float32, device=self.device,
+        )
         for i, coord in enumerate(axes):
             ground_truth[:, :, i] = torch.tensor(
-                label[[f"{coord}_{j + 1}" for j in range(num_ground_truths)]].values.T.reshape((len(label), num_ground_truths)),
+                label[[
+                    f"{coord}_{j + 1}"
+                    for j in range(num_ground_truths)
+                ]].values.T.reshape((len(label), num_ground_truths)),
                 dtype=torch.float32,
                 device=self.device,
             )
+
+        if should_reverse:
+            ground_truth = torch.flip(ground_truth, dims=[0])
 
         return ground_truth, num_ground_truths
 
@@ -189,7 +200,13 @@ if __name__ == "__main__":
     token_lib_ = TokenLibrary()
     msa_dataset_ = MSADataset(
         msa_folders=msa_folders_,
-        msa_config=MSAConfig(),  # Assuming MSAConfig is not needed for this example
+        msa_config=MSAConfig(
+            block_size_remove_factor=0.15,
+            num_blocks_to_remove=3,
+            min_num_seqs_to_keep=10,
+            num_representatives=d_msa,
+            mutation_percent=0.15,
+        ),  # Assuming MSAConfig is not needed for this example
         residues=list("ACGU-"),
         token_encoder=TokenEncoder(
             tokens=np.array(token_lib_.all_tokens, dtype='U1'),
@@ -199,7 +216,8 @@ if __name__ == "__main__":
     )
     seq_padder_ = SequencePadder(pad_token_id=token_lib_.pad_token_id)
     batch_collator_ = BatchCollator(sequence_padder=seq_padder_)
-    dataset_ = ExperimentalDataset(sequence_files_, label_files_, msa_dataset_, seq_padder_, batch_collator_, device=torch.device("cpu"))
+    dataset_ = ExperimentalDataset(sequence_files_, label_files_, msa_dataset_, seq_padder_, batch_collator_,
+                                   chance_flip=0.5, chance_use_msa_when_available=0.95, device=torch.device("cpu"))
     print(f"Dataset length: {len(dataset_)}")
     print(f"First item: {dataset_[0]}")
     for i_, record_ in enumerate(dataset_):

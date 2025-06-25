@@ -9,7 +9,7 @@ from model.triangular_attention import TriangularAttention
     for dollar in (tuple(), (3, 2))
     for wise in ("row", "col")
 ])
-def test_triangular_attention_forward(B, L, d_model, n_heads, d_k, dollar, wise):
+def test_forward(B, L, d_model, n_heads, d_k, dollar, wise):
     tr_attn = TriangularAttention(
         d_model=d_model,
         d_k=d_k,

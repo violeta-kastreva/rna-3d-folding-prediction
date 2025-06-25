@@ -65,6 +65,8 @@ class MultiHeadAttention(nn.Module):
     :param n_head: The number of heads to use.
     :param d_k: The dimensionality of the keys.
     :param d_v: The dimensionality of the values. If None, defaults to d_k.
+    :param d_k_model: The dimensionality of the keys in the model. If None, defaults to d_model.
+    :param d_v_model: The dimensionality of the values in the model. If None, defaults to d_k_model.
     :param dropout: The dropout rate to apply to the attention weights.
     """
 
@@ -74,6 +76,8 @@ class MultiHeadAttention(nn.Module):
             n_head: int,
             d_k: int,
             d_v: Optional[int] = None,
+            d_k_model: Optional[int] = None,  # If not provided, defaults to d_model.
+            d_v_model: Optional[int] = None,  # If not provided, defaults to d_k_model.
             dropout: float = 0.1
     ):
         super().__init__()
@@ -82,9 +86,12 @@ class MultiHeadAttention(nn.Module):
         self.d_k: int = d_k
         self.d_v: int = default(d_v, d_k)
 
+        d_k_model = default(d_k_model, d_model)
+        d_v_model = default(d_v_model, d_k_model)
+
         self.w_qs = nn.Linear(d_model, n_head * self.d_k, bias=False)  # (d_model) -> (n_head * d_k)
-        self.w_ks = nn.Linear(d_model, n_head * self.d_k, bias=False)  # (d_model) -> (n_head * d_k)
-        self.w_vs = nn.Linear(d_model, n_head * self.d_v, bias=False)  # (d_model) -> (n_head * d_v)
+        self.w_ks = nn.Linear(d_k_model, n_head * self.d_k, bias=False)  # (d_k_model) -> (n_head * d_k)
+        self.w_vs = nn.Linear(d_v_model, n_head * self.d_v, bias=False)  # (d_v_model) -> (n_head * d_v)
         self.fc = nn.Linear(n_head * self.d_v, d_model, bias=False)  # (n_head * d_v) -> (d_model)
 
         self.attention: ScaledDotProductAttention = ScaledDotProductAttention(
@@ -95,8 +102,8 @@ class MultiHeadAttention(nn.Module):
     def forward(
             self,
             q: torch.Tensor,  # Shape: (B, $, L_q, d_model) # B, T, C
-            k: torch.Tensor,  # Shape: (B, $, L_k, d_model)
-            v: torch.Tensor,  # Shape: (B, $, L_k, d_model)
+            k: torch.Tensor,  # Shape: (B, $, L_k, d_k_model)
+            v: torch.Tensor,  # Shape: (B, $, L_k, d_v_model)
             attention_bias: Optional[torch.Tensor] = None,  # Shape: (B, $$, 1, L_q, L_k) or None, $$ broadcastable to $
             has_attention_bias_dim_for_heads: bool = False,  # If True, attention_bias is expected to be of shape (B, $$, x, L_q, L_k) where x in {1, n_head}, otherwise (B, $$, L_q, L_k).
             attn_mask: Optional[torch.Tensor] = None,  # Optional attention mask for causal masking or padding.
@@ -134,7 +141,7 @@ class MultiHeadAttention(nn.Module):
             v.transpose(-3, -2),  # Shape: (B, $, n_head, L_k, d_v)
         )
 
-        if not has_attention_bias_dim_for_heads:
+        if exists(attention_bias) and not has_attention_bias_dim_for_heads:
             attention_bias = attention_bias.clone().unsqueeze(-3)  # Shape: (B, $$, 1, L_q, L_k)
 
         if exists(attn_mask):

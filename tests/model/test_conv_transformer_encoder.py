@@ -14,7 +14,7 @@ from model.conv_transformer_encoder import ConvTransformerEncoder
         for dollar in (tuple(), (3, 2))
     ]
 )
-def test_conv_transformer_encoder_forward(
+def test_forward(
         B, d_model, n_heads, d_pair_repr, use_triangular_attention, dim_msa, L, dollar, add_attn_mask,
 ):
     cte = ConvTransformerEncoder(

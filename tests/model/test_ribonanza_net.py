@@ -27,7 +27,7 @@ from model.ribonanza_net import RibonanzaNet, ModelConfig
         for dollar in (tuple(), (1, 2))
     ]
 )
-def test_conv_transformer_encoder_forward(
+def test_forward(
         d_model, n_heads, d_pair_repr, d_msa, num_blocks, use_triangular_attention, use_gradient_checkpoint,
         data_input,
 ):

@@ -21,7 +21,7 @@ from model.product_sequences_lstm import ProductSequencesLSTM
         for all_sequences in ([torch.rand(l, d_input) for l in lengths],)
     ]
 )
-def test_product_sequences_lstm(
+def test_forward(
         batch_size, max_L, all_sequences, lengths,
         d_input, d_output, num_layers, is_bidirectional,
 ):
@@ -30,7 +30,7 @@ def test_product_sequences_lstm(
     packed_input = pack_padded_sequence(padded_sequences, lengths, batch_first=True, enforce_sorted=False)
 
     lstm = ProductSequencesLSTM(
-        d_input=d_input, d_output=d_output, num_layers=num_layers, is_bidirectional=is_bidirectional
+        d_input=d_input, d_output=d_output, num_layers=num_layers, is_bidirectional=is_bidirectional, dropout=0.1,
     )
     per_sequence_representations, packed_output, (h_n, c_n) = lstm(packed_input)
 

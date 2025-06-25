@@ -13,7 +13,7 @@ from model.multi_head_attention import MultiHeadAttention
         for dollar in (tuple(), (3, 2))
     ]
 )
-def test_multi_head_attention_forward(
+def test_forward(
         B, d_model, n_head, d_k, d_v, L_q, L_k, has_attention_bias_dim_for_heads, is_attn_mask_1d, dollar
 ):
     if is_attn_mask_1d:

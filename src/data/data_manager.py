@@ -49,6 +49,9 @@ class DataManagerConfig:
 
     train_shuffle_radius: int = 50
 
+    chance_flip_sequences: float = 0.5
+    chance_use_msa_when_available: float = 0.95
+
     def __post_init__(self):
         if self.combine_synthetic_with_real_data and (
             self.synthetic_data_root_path is None or
@@ -103,6 +106,8 @@ class DataManager(TokenLibrary):
             msa_dataset=self.msa_dataset,
             sequence_padder=self.sequence_padder,
             batch_collator=self.batch_collator,
+            chance_flip=self.config.chance_flip_sequences,
+            chance_use_msa_when_available=self.config.chance_use_msa_when_available,
             device=self.device,
         )
         if not self.config.combine_synthetic_with_real_data:
@@ -114,8 +119,10 @@ class DataManager(TokenLibrary):
                 UVSyntheticDataset(
                     root_path=self.config.synthetic_data_root_path,
                     index_filepath=self.config.synthetic_data_index_filepath,
+                    msa_dataset=self.msa_dataset,
                     batch_collator=self.batch_collator,
                     encoder=self.token_encoder,
+                    chance_flip=self.config.chance_flip_sequences,
                     device=self.device,
                 ),
             ],
@@ -129,6 +136,8 @@ class DataManager(TokenLibrary):
             msa_dataset=self.msa_dataset,
             sequence_padder=self.sequence_padder,
             batch_collator=self.batch_collator,
+            chance_flip=0.0,
+            chance_use_msa_when_available=1.0,
             device=self.device,
         )
 
@@ -140,6 +149,8 @@ class DataManager(TokenLibrary):
             msa_dataset=self.msa_dataset,
             sequence_padder=self.sequence_padder,
             batch_collator=self.batch_collator,
+            chance_flip=0.0,
+            chance_use_msa_when_available=1.0,
             device=self.device,
         )
 

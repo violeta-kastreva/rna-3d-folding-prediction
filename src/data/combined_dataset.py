@@ -3,7 +3,7 @@ from itertools import accumulate
 from overrides import overrides
 
 from data.rna_dataset_base import RNADatasetBase
-from data.batch_collator import DataPoint, DataBatch
+from data.typing import DataPoint, DataBatch
 
 
 class CombinedDataset(RNADatasetBase):

@@ -10,7 +10,7 @@ from model.triangular_multiplicative_module import TriangleMultiplicativeModule
     for dollar in (tuple(), (3, 2))
     for mix in ("ingoing", "outgoing")
 ])
-def test_triangle_multiplicative_module(d_model: int, L: int, B: int, dollar: tuple[int, ...], mix: str):
+def test_forward(d_model: int, L: int, B: int, dollar: tuple[int, ...], mix: str):
     tr_mm = TriangleMultiplicativeModule(
         dim=d_model,
         hidden_dim=d_model // 2,

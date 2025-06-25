@@ -5,7 +5,9 @@ import torch
 from overrides import overrides
 import pandas as pd
 
-from data.batch_collator import BatchCollator, DataPoint, DataBatch
+from data.batch_collator import BatchCollator
+from data.msa.msa_dataset import MSADataset
+from data.typing import DataPoint, DataBatch
 from data.rna_dataset_base import RNADatasetBase
 from data.token_encoder import TokenEncoder
 
@@ -15,14 +17,18 @@ class UVSyntheticDataset(RNADatasetBase):
             self,
             root_path: str,
             index_filepath: str,
+            msa_dataset: MSADataset,
             batch_collator: BatchCollator,
             encoder: TokenEncoder,
+            chance_flip: float,
             device: torch.device,
     ):
         self.root_path: str = root_path
         self.index_df: pd.DataFrame = pd.read_csv(index_filepath, sep=",")
+        self.msa_dataset: MSADataset = msa_dataset
         self.batch_collator: BatchCollator = batch_collator
         self.encoder: TokenEncoder = encoder
+        self.chance_flip: float = chance_flip
         self.device: torch.device = device
 
     @overrides
@@ -47,8 +53,19 @@ class UVSyntheticDataset(RNADatasetBase):
         input = pd.read_csv(os.path.join(self.root_path, f"{target_id}.in"), sep=",").iloc[0]
         label: pd.DataFrame = pd.read_csv(os.path.join(self.root_path, f"{target_id}.gt"), sep=",")
 
+        should_reverse: bool = np.random.rand() < self.chance_flip
         sequence = self.encoder.encode(np.array(list(input['sequence']), dtype='U1'))
+        if should_reverse:
+            sequence = sequence[::-1]
         sequence = torch.tensor(sequence, dtype=torch.int8, device=self.device)
+
+        has_msa: bool = False
+        msa, msa_profiles = self.msa_dataset.get_msa(
+            target_id,
+            has_msa=has_msa,
+            sequence=input['sequence'],
+            transform=lambda x: x[:, ::-1] if should_reverse else x
+        )
 
         label.drop(columns=['ID', 'target_id'], inplace=True)
         label.sort_values(by='resid', inplace=True)
@@ -61,10 +78,10 @@ class UVSyntheticDataset(RNADatasetBase):
             "target_id": target_id,
             "sequence": sequence,
             "sequence_mask": torch.ones_like(sequence, dtype=torch.bool, device=self.device),
-            "has_msa": torch.tensor(False, dtype=torch.bool, device=self.device),
-            "msa": None,
-            "msa_profiles": None,
-            "has_product_sequences": torch.tensor(False, dtype=torch.bool, device=self.device),
+            "has_msa": torch.tensor(has_msa, dtype=torch.bool, device=self.device),
+            "msa": torch.tensor(msa, dtype=torch.int8, device=self.device),
+            "msa_profiles": torch.tensor(msa_profiles, dtype=torch.float32, device=self.device),
+            "num_product_sequences": torch.tensor(0, dtype=torch.int16, device=self.device),
             "product_sequences": None,
             "ground_truth": ground_truth,
             "num_ground_truths": torch.tensor(1, dtype=torch.int8, device=self.device),

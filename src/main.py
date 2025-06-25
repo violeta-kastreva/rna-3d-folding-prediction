@@ -1,12 +1,19 @@
-import torch
+from training.training_config import TrainingConfig
+from training.training_loop import TrainingLoop
+from training.training_setup import TrainingSetup
 
 
+def main(inference_mode: bool = False):
+    training_loop: TrainingLoop = (
+        TrainingSetup(training_config=TrainingConfig())
+        .create_modules()
+        .build_training_loop()
+    )
 
-def main():
-    if torch.cuda.is_available():
-        print("CUDA is available. GPU detected:", torch.cuda.get_device_name(0))
-    else:
-        print("CUDA is not available. Running on CPU.")
+    if not inference_mode:
+        training_loop.run()
+
+    training_loop.test(inference_mode)
 
 
 if __name__ == "__main__":

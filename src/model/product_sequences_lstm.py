@@ -4,7 +4,7 @@ from torch.nn.utils.rnn import pad_packed_sequence, PackedSequence
 
 
 class ProductSequencesLSTM(nn.Module):
-    def __init__(self, d_input: int, d_output: int, num_layers: int, is_bidirectional: bool):
+    def __init__(self, d_input: int, d_output: int, num_layers: int, is_bidirectional: bool, dropout: float):
         super().__init__()
 
         assert d_output % 2 == 0, "Output dimension must be divisible by 2."
@@ -17,11 +17,10 @@ class ProductSequencesLSTM(nn.Module):
             num_layers=num_layers,
             bidirectional=is_bidirectional,
             batch_first=True,
+            dropout=dropout,
         )
 
-    def forward(self, packed_input: PackedSequence):
-        # padded_sequences = pad_sequence(all_sequences, batch_first=True)
-        # packed_input = pack_padded_sequence(padded_sequences, lengths, batch_first=True, enforce_sorted=False)
+    def forward(self, packed_input: PackedSequence) -> tuple[torch.Tensor, PackedSequence, tuple[torch.Tensor, torch.Tensor]]:
         packed_output, (h_n, c_n) =self.lstm(packed_input)
 
         # Unpack the packed sequence

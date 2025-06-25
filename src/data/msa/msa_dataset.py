@@ -12,17 +12,17 @@ from data.msa.msa_clusterer import MSAClusterer
 
 @dataclass
 class MSAConfig:
-    block_size_remove_factor: float = 0.15
-    num_blocks_to_remove: int = 3
-    min_num_seqs_to_keep: int = 10
-    num_representatives: int = 128
-    mutation_percent: float = 0.15
+    block_size_remove_factor: float
+    num_blocks_to_remove: int
+    min_num_seqs_to_keep: int
+    num_representatives: int
+    mutation_percent: float
 
 
 class MSADataset:
     def __init__(
             self,
-            msa_folders: list[str],  # TODO: Remove default values everywhere
+            msa_folders: list[str],
             msa_config: MSAConfig,
             residues: list[str],
             token_encoder: TokenEncoder,
@@ -48,11 +48,21 @@ class MSADataset:
         """
         return self.loader.has_msa(target_id)
 
-    def get_msa(self, target_id: str, seq_len: int, transform: Optional[Callable]) -> tuple[np.ndarray, np.ndarray]:
+    def get_msa(
+            self,
+            target_id: str,
+            has_msa: bool,
+            sequence: str,
+            transform: Optional[Callable]
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Load the MSA for a given target ID.
         """
-        msa: np.ndarray = self.loader.get_msa(target_id, seq_len)
+        msa: np.ndarray
+        if has_msa:
+            msa = self.loader.get_msa(target_id, len(sequence))
+        else:
+            msa = np.array(list(sequence), dtype='U1')
 
         msa = self.token_encoder.encode(msa)
 
@@ -85,12 +95,12 @@ if __name__ == "__main__":
 
     token_encoder_: TokenEncoder = TokenEncoder(np.array(residues_), {x: i for i, x in enumerate(residues_)}, 4)
 
-    msa_dataset: MSADataset = MSADataset(msa_folders_, msa_config_, residues_, token_encoder_)
+    msa_dataset_: MSADataset = MSADataset(msa_folders_, msa_config_, residues_, token_encoder_)
 
-    if msa_dataset.has_msa(target_id_):
-        cluster_representatives, msa_profiles = msa_dataset.get_msa(target_id_, seq_len=41, transform=None)
-        print(f"Cluster Representatives for {target_id_}: {cluster_representatives.shape}\n{cluster_representatives}")
-        print(f"MSA Profiles for {target_id_}: {msa_profiles.shape}\n{msa_profiles}")
+    if msa_dataset_.has_msa(target_id_):
+        cluster_representatives_, msa_profiles_ = msa_dataset_.get_msa(target_id_, has_msa=True, sequence="A" * 41, transform=None)
+        print(f"Cluster Representatives for {target_id_}: {cluster_representatives_.shape}\n{cluster_representatives_}")
+        print(f"MSA Profiles for {target_id_}: {msa_profiles_.shape}\n{msa_profiles_}")
 
     else:
         print(f"No MSA found for target ID: {target_id_}")

@@ -7,7 +7,7 @@ from model.invariant_point_attention import InvariantPointAttention
     (2, 5, 16, 4, 8, 6, 8, 6, 10, True, dollar)
     for dollar in (tuple(), (3, 2))
 ])
-def test_invariant_point_attention(
+def test_forward(
         B, L, d_model, n_heads, d_sk, d_pk, d_sv, d_pv, d_pair_repr, does_require_pair_repr, dollar
 ):
     ipa = InvariantPointAttention(

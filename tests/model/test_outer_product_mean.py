@@ -10,7 +10,7 @@ from model.outer_product_mean import OuterProductMean
         for dollar in (tuple(), (3, 2))
     ]
 )
-def test_outer_product_mean(B, L, in_dim, dim_msa, pairwise_dim, dollar):
+def test_forward(B, L, in_dim, dim_msa, pairwise_dim, dollar):
     opm = OuterProductMean(
         in_dim=in_dim,
         dim_msa=dim_msa,
