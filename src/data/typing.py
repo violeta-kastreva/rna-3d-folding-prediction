@@ -11,6 +11,7 @@ DataPointKey = Literal[
     "product_sequences",
     "ground_truth",
     "num_ground_truths",
+    "ground_truth_mask",
     "is_synthetic",
 ]
 

@@ -19,7 +19,7 @@ class TrainBatchSampler(Sampler[list[int]]):
 
         self.dataset_len: int = len(dataset)
         self.dataset_ordered_indices: list[int] = torch.argsort(
-            torch.tensor(dataset.records_lengths()[:self.dataset_len], dtype=torch.int16)
+            torch.tensor(dataset.records_lengths()[:self.dataset_len], dtype=torch.int32)
         ).tolist()
 
     def __len__(self) -> int:

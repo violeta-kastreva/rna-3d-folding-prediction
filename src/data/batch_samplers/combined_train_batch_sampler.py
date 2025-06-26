@@ -25,10 +25,10 @@ class CombinedTrainBatchSampler(Sampler[list[int]]):
         self.synthetic_ratio: float = self.dataset2_len / self.data_len
 
         self.dataset1_ordered_indices: list[int] = torch.argsort(
-            torch.tensor(dataset.records_lengths()[:self.dataset1_len], dtype=torch.int16)
+            torch.tensor(dataset.records_lengths()[:self.dataset1_len], dtype=torch.int32)
         ).tolist()
         self.dataset2_ordered_indices: list[int] = torch.argsort(
-            torch.tensor(dataset.records_lengths()[self.dataset1_len:], dtype=torch.int16)
+            torch.tensor(dataset.records_lengths()[self.dataset1_len:], dtype=torch.int32)
         ).tolist()
 
     def dataset2_length(self) -> int:

@@ -29,7 +29,8 @@ class SequencePadder:
             sequences,
             batch_first=True,
             padding_value=self.pad_token_id if pad_value is None else pad_value
-        ).to(device=device)
+        )
+        padded_sequences = padded_sequences.to(device=device) if device is not None else padded_sequences
 
         if transpose_condition:
             padded_sequences = padded_sequences.transpose(sequence_axis + 1, 0 + 1)

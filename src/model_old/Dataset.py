@@ -38,7 +38,7 @@ class RNADataset(Dataset):
         self.flip: bool = flip
 
     def generate_src_mask(self, L1, L2, k):
-        mask=np.ones((k,L2), dtype='int8')
+        mask = np.ones((k, L2), dtype='int32')
         for i in range(k):
             mask[i, L1 + i + 1 - k:] = 0
         return mask

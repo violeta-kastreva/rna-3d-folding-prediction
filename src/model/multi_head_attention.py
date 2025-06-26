@@ -130,9 +130,9 @@ class MultiHeadAttention(nn.Module):
         B_, L_q, L_k = q.shape[:-2], q.size(-2), v.size(-2)  # B_ is (B, $).
 
         # Linear projections and reshape to multiple heads
-        q = self.w_qs(q).view(*B_, L_q, n_head, d_k)  # Shape: (B, $, L_q, n_head, d_k)
-        k = self.w_ks(k).view(*B_, L_k, n_head, d_k)  # Shape: (B, $, L_k, n_head, d_k)
-        v = self.w_vs(v).view(*B_, L_k, n_head, d_v)  # Shape: (B, $, L_k, n_head, d_v)
+        q = self.w_qs(q).contiguous().view(*B_, L_q, n_head, d_k)  # Shape: (B, $, L_q, n_head, d_k)
+        k = self.w_ks(k).contiguous().view(*B_, L_k, n_head, d_k)  # Shape: (B, $, L_k, n_head, d_k)
+        v = self.w_vs(v).contiguous().view(*B_, L_k, n_head, d_v)  # Shape: (B, $, L_k, n_head, d_v)
 
         # Transpose for multi-head attention computation
         q, k, v = (
@@ -146,7 +146,7 @@ class MultiHeadAttention(nn.Module):
 
         if exists(attn_mask):
             if is_attn_mask_1d:  # If attn_mask is (B, $$, L_q) & L_q = L_k
-                attn_mask = attn_mask.clone().unsqueeze(-1).short()  # Shape: (B, $$, L_q, 1)
+                attn_mask = attn_mask.clone().unsqueeze(-1).float()  # Shape: (B, $$, L_q, 1)
                 attn_mask = (torch
                     .matmul(
                         attn_mask,  # Shape: (B, $$, L_q, 1)

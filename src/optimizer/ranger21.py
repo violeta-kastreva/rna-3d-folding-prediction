@@ -295,7 +295,8 @@ class Ranger21(TO.Optimizer):
 
         # print out initial settings to make usage easier
 
-        self.show_settings()
+        if logging_active:
+            self.show_settings()
 
     def __setstate__(self, state):
         super().__setstate__(state)

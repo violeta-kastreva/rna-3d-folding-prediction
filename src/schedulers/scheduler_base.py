@@ -1,4 +1,6 @@
-from typing import Protocol, Self, Any, TypeVar, runtime_checkable
+from typing import Protocol, Any, TypeVar, runtime_checkable
+
+from typing_extensions import Self
 
 T_co = TypeVar('T_co', covariant=True)
 

@@ -245,10 +245,12 @@ class RibonanzaNet3D(nn.Module):
         unpacked_product_sequences = torch.zeros(
             (B, max_num_product_sequences, self.config.d_lstm),
             dtype=per_sequence_representations.dtype,
+            device=per_sequence_representations.device,
         )
         unpacked_product_sequences_mask = torch.zeros(
             (B, max_num_product_sequences),
             dtype=torch.bool,
+            device=per_sequence_representations.device,
         )
         indices = data["product_sequences_indices"]
         unpacked_product_sequences[indices[0, :], indices[1, :], :] = per_sequence_representations

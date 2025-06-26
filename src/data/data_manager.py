@@ -174,7 +174,7 @@ class DataManager(TokenLibrary):
             num_workers=self.config.train_num_workers,
             batch_sampler=batch_sampler,
             prefetch_factor=self.config.prefetch_factor,
-            collate_fn=lambda x: self.batch_collator(x),
+            collate_fn=self.batch_collator.__call__,
         )
 
     @cached_property
@@ -184,7 +184,7 @@ class DataManager(TokenLibrary):
             num_workers=self.config.val_num_workers,
             batch_size=self.config.val_batch_size,
             prefetch_factor=self.config.prefetch_factor,
-            collate_fn=lambda x: self.batch_collator(x),
+            collate_fn=self.batch_collator.__call__,
         )
 
     @cached_property
@@ -194,5 +194,5 @@ class DataManager(TokenLibrary):
             num_workers=self.config.test_num_workers,
             batch_size=self.config.test_batch_size,
             prefetch_factor=self.config.prefetch_factor,
-            collate_fn=lambda x: self.batch_collator(x),
+            collate_fn=self.batch_collator.__call__,
         )

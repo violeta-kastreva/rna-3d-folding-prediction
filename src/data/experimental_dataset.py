@@ -73,19 +73,20 @@ class ExperimentalDataset(RNADatasetBase):
         sequence, should_reverse = self._get_sequence(idx)
         has_msa, msa, msa_profiles = self._get_msa(target_id, idx, should_reverse)
         num_product_sequences, product_sequences = self._get_product_sequences(idx)
-        ground_truth, num_ground_truths = self._get_ground_truth(idx, target_id, should_reverse)
+        ground_truth, num_ground_truths, ground_truth_mask = self._get_ground_truth(idx, target_id, should_reverse)
 
         result: DataPoint = {
             "target_id": target_id,
             "sequence": sequence,
             "sequence_mask": torch.ones_like(sequence, dtype=torch.bool, device=self.device),
             "has_msa": torch.tensor(has_msa, dtype=torch.bool, device=self.device),
-            "msa": torch.tensor(msa, dtype=torch.int8, device=self.device),
+            "msa": torch.tensor(msa, dtype=torch.int32, device=self.device),
             "msa_profiles": torch.tensor(msa_profiles, dtype=torch.float32, device=self.device),
-            "num_product_sequences": torch.tensor(num_product_sequences, dtype=torch.int16, device=self.device),
+            "num_product_sequences": torch.tensor(num_product_sequences, dtype=torch.int32, device=self.device),
             "product_sequences": product_sequences,
             "ground_truth": ground_truth,
-            "num_ground_truths": torch.tensor(num_ground_truths, dtype=torch.int8, device=self.device),
+            "num_ground_truths": torch.tensor(num_ground_truths, dtype=torch.int32, device=self.device),
+            "ground_truth_mask": ground_truth_mask,
             "is_synthetic": torch.tensor(False, dtype=torch.bool, device=self.device),
         }
 
@@ -98,12 +99,10 @@ class ExperimentalDataset(RNADatasetBase):
         should_reverse: bool = random.random() < self.chance_flip
         if should_reverse:
             sequence = sequence[::-1].copy()
-        return torch.tensor(sequence, dtype=torch.int8, device=self.device), should_reverse
+        return torch.tensor(sequence, dtype=torch.int32, device=self.device), should_reverse
 
     def _get_msa(self, target_id: str, idx: int, should_reverse: bool) -> tuple[bool, Optional[np.ndarray], Optional[np.ndarray]]:
         has_msa: bool = self.msa_dataset.has_msa(target_id) and random.random() < self.chance_use_msa_when_available
-        if not has_msa:
-            return False, None, None
 
         msa, msa_profiles = self.msa_dataset.get_msa(
             target_id,
@@ -121,13 +120,13 @@ class ExperimentalDataset(RNADatasetBase):
             for seq in all_sequences
         ]
 
-        if not num_product_sequences == 0:
+        if num_product_sequences == 0:
             return num_product_sequences, None
 
         product_sequences = [
             torch.tensor(
                 self.encoder.encode(np.array(list(seq), dtype='U1')),
-                dtype=torch.int8,
+                dtype=torch.int32,
                 device=self.device,
             )
             for seq in all_sequences
@@ -139,7 +138,9 @@ class ExperimentalDataset(RNADatasetBase):
     def _parse_sequences(sequences: str) -> list[list[str]]:
         return MSALoader.parse_fasta(StringIO(sequences))
 
-    def _get_ground_truth(self, idx: int, target_id: str, should_reverse: bool) -> tuple[torch.Tensor, int]:
+    def _get_ground_truth(
+        self, idx: int, target_id: str, should_reverse: bool
+    ) -> tuple[torch.Tensor, int, torch.Tensor]:
         label: pd.DataFrame = self.df_labels.get_group(target_id).copy()
 
         assert target_id in self.df_labels.groups and not label.empty, \
@@ -156,8 +157,12 @@ class ExperimentalDataset(RNADatasetBase):
         num_ground_truths: int = len(label.columns) // 3
         last_index_valid_ground_truth: int = num_ground_truths
         axes: list[str] = ["x", "y", "z"]
+        HARDCODED_EPS_FOR_ZERO: float = -1e+18
         for i in range(num_ground_truths):
-            if any((label[f"{coord}_{i + 1}"].isna() | label[f"{coord}_{i + 1}"] == -1e+18).any() for coord in axes):
+            if all(
+                    (label[f"{coord}_{i + 1}"].isna() | label[f"{coord}_{i + 1}"] == HARDCODED_EPS_FOR_ZERO).all()
+                    for coord in axes
+            ):
                 last_index_valid_ground_truth = i
                 break
 
@@ -178,7 +183,11 @@ class ExperimentalDataset(RNADatasetBase):
         if should_reverse:
             ground_truth = torch.flip(ground_truth, dims=[0])
 
-        return ground_truth, num_ground_truths
+        ground_truth_mask = ~torch.isnan(ground_truth) & (ground_truth != HARDCODED_EPS_FOR_ZERO)
+        ground_truth[~ground_truth_mask] = 0.0
+        ground_truth_mask = ground_truth_mask.all(dim=-1)
+
+        return ground_truth, num_ground_truths, ground_truth_mask
 
     @overrides
     def collate_fn(self, batch: list[DataPoint]) -> DataBatch:
@@ -198,13 +207,14 @@ if __name__ == "__main__":
     from data.msa.msa_dataset import MSAConfig
     from data.token_library import TokenLibrary
     token_lib_ = TokenLibrary()
+    d_msa_ = 16
     msa_dataset_ = MSADataset(
         msa_folders=msa_folders_,
         msa_config=MSAConfig(
             block_size_remove_factor=0.15,
             num_blocks_to_remove=3,
             min_num_seqs_to_keep=10,
-            num_representatives=d_msa,
+            num_representatives=d_msa_,
             mutation_percent=0.15,
         ),  # Assuming MSAConfig is not needed for this example
         residues=list("ACGU-"),

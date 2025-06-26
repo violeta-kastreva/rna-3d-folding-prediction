@@ -26,7 +26,7 @@ from loss.topological_loss import TopologicalLoss
 def test_forward(predicted, data_batch):
     loss = TopologicalLoss()
 
-    losses = loss(predicted, data_batch)
+    loss, agg_losses, _ = loss(predicted, data_batch)
 
-    assert all(isinstance(l.item(), float) for l in losses), \
+    assert all(isinstance(l.item(), float) for l in agg_losses + (loss,)), \
         "All losses should be float values."

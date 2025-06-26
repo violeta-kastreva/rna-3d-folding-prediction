@@ -66,7 +66,7 @@ class TriangularAttention(nn.Module):
         [i] comments are from: https://kaggle-images.s3.us-west-2.amazonaws.com/ribonanza-3d/triangular_self_attention.png
         """
         # Spawn pair mask
-        sequence_mask = sequence_mask.clone().short() # Shape: (B, $$, I)
+        sequence_mask = sequence_mask.clone().float()  # Shape: (B, $$, I)
         sequence_mask = sequence_mask.unsqueeze(-1)  # Shape: (B, $$, I, 1)
         attn_mask = torch.matmul(
             sequence_mask,  # Shape: (B, $$, I, 1)

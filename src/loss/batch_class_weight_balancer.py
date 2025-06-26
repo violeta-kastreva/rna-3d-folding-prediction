@@ -17,7 +17,7 @@ class BatchBinaryClassWeightBalancer:
                 - Weight for the positive class = 1 / (2 * number of positive records)
                 - Weight for the negative class = 1 / (2 * number of negative records)
         """
-        num_true: int = batch_record_classes.sum(dim=-1, dtype=torch.int16).item()
+        num_true: int = batch_record_classes.sum(dim=-1, dtype=torch.int32).item()
         num_false: int = batch_record_classes.shape[-1] - num_true
 
         if num_false == 0:

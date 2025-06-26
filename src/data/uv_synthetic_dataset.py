@@ -57,7 +57,7 @@ class UVSyntheticDataset(RNADatasetBase):
         sequence = self.encoder.encode(np.array(list(input['sequence']), dtype='U1'))
         if should_reverse:
             sequence = sequence[::-1]
-        sequence = torch.tensor(sequence, dtype=torch.int8, device=self.device)
+        sequence = torch.tensor(sequence, dtype=torch.int32, device=self.device)
 
         has_msa: bool = False
         msa, msa_profiles = self.msa_dataset.get_msa(
@@ -79,12 +79,12 @@ class UVSyntheticDataset(RNADatasetBase):
             "sequence": sequence,
             "sequence_mask": torch.ones_like(sequence, dtype=torch.bool, device=self.device),
             "has_msa": torch.tensor(has_msa, dtype=torch.bool, device=self.device),
-            "msa": torch.tensor(msa, dtype=torch.int8, device=self.device),
+            "msa": torch.tensor(msa, dtype=torch.int32, device=self.device),
             "msa_profiles": torch.tensor(msa_profiles, dtype=torch.float32, device=self.device),
-            "num_product_sequences": torch.tensor(0, dtype=torch.int16, device=self.device),
+            "num_product_sequences": torch.tensor(0, dtype=torch.int32, device=self.device),
             "product_sequences": None,
             "ground_truth": ground_truth,
-            "num_ground_truths": torch.tensor(1, dtype=torch.int8, device=self.device),
+            "num_ground_truths": torch.tensor(1, dtype=torch.int32, device=self.device),
             "is_synthetic": torch.tensor(True, dtype=torch.bool, device=self.device),
         }
 

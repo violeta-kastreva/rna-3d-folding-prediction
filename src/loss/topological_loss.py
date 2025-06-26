@@ -48,7 +48,13 @@ class TopologicalLoss(nn.Module):
         predicted = predicted.unsqueeze(-3)  # Shape: (B, $, 1, max_sequence_length, 3)
         ground_truth = data["ground_truth"].transpose(-2, -3)  # Shape: (B, $, max_num_ground_truth, max_sequence_length, 3)
         sequence_mask = data["sequence_mask"].unsqueeze(-2)  # Shape: (B, $, 1, max_sequence_length)
-        L = sequence_mask.int().sum(dim=-1)  # Shape: (B, $, 1)
+        ground_truth_mask = data["ground_truth_mask"].transpose(-1, -2)  # Shape: (B, $, max_num_ground_truth, max_sequence_length)
+        ground_truth_mask = ground_truth_mask & sequence_mask
+        sequence_mask = ground_truth_mask  # Shape: (B, $, max_num_ground_truth, max_sequence_length)
+        L_gt = sequence_mask.int().sum(dim=-1)  # Shape: (B, $, max_num_ground_truth)
+        # L = sequence_mask.int().sum(dim=-1)  # Shape: (B, $, 1)  # (L_gt <= L).all
+        L_gt = L_gt.masked_fill(L_gt < 2, 2)
+        L = L_gt
         is_synthetic = data["is_synthetic"]  # Shape: (B, $)
 
         # predicted_aligned: (B, $, max_num_ground_truth, max_sequence_length, 3)
@@ -98,7 +104,11 @@ class TopologicalLoss(nn.Module):
         agg_folding_angles_loss = self.aggregate_loss(folding_angles_loss, *params)
         agg_probability_loss = self.aggregate_loss(probability_loss, *params)
 
-        return loss, agg_rmse_loss, agg_cross_distance_loss, agg_folding_angles_loss, agg_probability_loss
+        return (
+            loss,
+            (agg_rmse_loss, agg_cross_distance_loss, agg_folding_angles_loss, agg_probability_loss),
+            (rmse_loss, cross_distance_loss, folding_angles_loss, probability_loss),
+        )
 
     def calculate_rmse(
         self,

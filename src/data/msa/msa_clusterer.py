@@ -71,7 +71,7 @@ class MSAClusterer:
             if i not in ids_representatives:
                 groups[closest].append(i)
 
-        groups = [np.array(group, dtype=np.int16) for group in groups]
+        groups = [np.array(group, dtype=np.int32) for group in groups]
         return groups
 
     def aggregate_cluster_info(
@@ -144,8 +144,9 @@ class MSAClusterer:
 
         mutated_representatives = np.array([
             [
-                np.random.choice(self.residues, p=probabilities / np.sum(probabilities))
+                np.random.choice(self.residues, p=probabilities / (1.0 if np.isnan(sum_probs) or sum_probs == 0.0 else sum_probs))
                 for probabilities in residue_frequencies[i]
+                for sum_probs in (np.sum(probabilities),)
             ]
             for i in range(len(residue_frequencies))
         ], dtype=representatives.dtype)

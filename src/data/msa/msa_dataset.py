@@ -62,7 +62,7 @@ class MSADataset:
         if has_msa:
             msa = self.loader.get_msa(target_id, len(sequence))
         else:
-            msa = np.array(list(sequence), dtype='U1')
+            msa = np.array([list(sequence)], dtype='U1')
 
         msa = self.token_encoder.encode(msa)
 

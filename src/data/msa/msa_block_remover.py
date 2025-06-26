@@ -19,14 +19,14 @@ class MSABlockRemover:
         """
         N_all_seq: int = msa.shape[0]
         block_size: int = self.calc_block_size(msa)
-        ids_to_delete = choices(range(N_all_seq - block_size), k=self.num_blocks)
+        ids_to_delete = choices(range(N_all_seq - block_size), k=self.num_blocks) if N_all_seq > self.min_to_keep + block_size else []
         ids_to_delete = [[pos, pos + block_size] for pos in ids_to_delete]
         ids_to_delete = self.union_intervals(ids_to_delete)
         ids_to_keep = np.array([
             num
             for [_, a], [b, _] in zip([[-1, 0]] + ids_to_delete, ids_to_delete + [[N_all_seq, -1]])
             for num in range(a, b)
-        ], dtype=np.int16)
+        ], dtype=np.int32)
         msa = msa[ids_to_keep, :]
         return msa, ids_to_keep
 

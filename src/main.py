@@ -15,6 +15,8 @@ def main(inference_mode: bool = False):
 
     training_loop.test(inference_mode)
 
+    training_loop.finish()
+
 
 if __name__ == "__main__":
     main()
